@@ -261,11 +261,14 @@ app.all("*", async (req, res) => {
         body = removeAllAds(body);
       }
 
-      // 2. Rewrite ALL known domains → relative URLs
+      // 2. Rewrite ALL known domains → relative URLs (HTML/JS/CSS only)
       //    https://hentaivox.com/path → /path
       //    Keeps subdomain URLs (a1.hentaivox.com, t.hentaivox.com) pointing to origin CDN
-      for (const domain of REWRITE_DOMAINS) {
-        body = replaceAllDomainReferences(body, domain);
+      //    SKIP for XML — sitemaps need absolute URLs, handled by rewriteSitemap below
+      if (!contentType.includes("xml")) {
+        for (const domain of REWRITE_DOMAINS) {
+          body = replaceAllDomainReferences(body, domain);
+        }
       }
 
       if (contentType.includes("text/html")) {
