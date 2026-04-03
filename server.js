@@ -256,13 +256,8 @@ app.all("*", async (req, res) => {
     if (isRewritableContent(contentType)) {
       let body = await response.text();
 
-      // 1. Remove all ads (HTML-level)
+      // 1. Remove all ads
       body = removeAllAds(body);
-
-      // 1.5 Strip ad code from JS bundles (jads.co, juicyads, popunder strings embedded in JS)
-      if (contentType.includes("javascript") || contentType.includes("text/javascript")) {
-        body = stripAdCodeFromJS(body);
-      }
 
       // 2. Rewrite ALL known domains → relative URLs
       //    https://hentaivox.com/path → /path
@@ -381,6 +376,7 @@ const AD_DOMAINS = [
   "fleshlight.com", "cam4.com", "stripchat.com",
   "chaturbate.com", "bongacams.com", "imlive.com",
   "jads.co", "poweredby.jads.co",
+  "wpadmngr.com", "js.wpadmngr.com",
 ];
 
 // ═══════════════════════════════════════════════════════════════
@@ -499,68 +495,6 @@ function removeAllAds(body) {
     "<!-- ad container removed -->"
   );
 
-  // J. Remove <ins> ad elements (JuicyAds, AdSense-style)
-  body = body.replace(
-    /<ins[^>]*(?:data-width|data-height|class\s*=\s*["']adsbygoogle)[^>]*>[\s\S]*?<\/ins>/gi,
-    "<!-- ad ins removed -->"
-  );
-
-  return body;
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  STRIP AD CODE FROM JS BUNDLES
-//  The origin's JS files contain hardcoded ad injection code
-//  (e.g. jQuery .append() of JuicyAds scripts). This function
-//  neutralizes those patterns inside JS content.
-// ═══════════════════════════════════════════════════════════════
-
-function stripAdCodeFromJS(body) {
-  // 1. Remove entire JuicyAds injection strings:
-  //    '<script ...src="https://poweredby.jads.co/js/jads.js">...(adsbyjuicy=...).push({adzone:...})...</script>'
-  //    These appear as string literals inside JS, used in jQuery .append() / .html()
-  body = body.replace(
-    /<\\?\/script[^'"]*src\\?=\\?["'][^"']*jads\.co[^"']*["'][^'"]*>[^'"]*adsbyjuicy[^'"]*<\\?\/\\?script\\?>/gi,
-    "<!-- ad removed -->"
-  );
-
-  // 2. Broader: any string containing poweredby.jads.co or jads.co/js
-  body = body.replace(
-    /https?:\\?\/\\?\/?poweredby\.jads\.co[^'"\\)}\s]*/gi,
-    "about:blank"
-  );
-  body = body.replace(
-    /https?:\\?\/\\?\/?[a-z]*\.?jads\.co\/js\/jads\.js/gi,
-    "about:blank"
-  );
-
-  // 3. Neutralize adsbyjuicy.push calls in JS strings
-  //    (adsbyjuicy = window.adsbyjuicy || []).push({...})
-  body = body.replace(
-    /\(adsbyjuicy\s*=\s*window\.adsbyjuicy\s*\|\|\s*\[\]\)\.push\(\{[^}]*\}\)/gi,
-    "void 0"
-  );
-
-  // 4. Remove JuicyAds <ins> elements in JS strings
-  body = body.replace(
-    /<ins\s+id=\\?["'][^"']*\\?["']\s+data-width=\\?["'][^"']*\\?["']\s+data-height=\\?["'][^"']*\\?["']><\\?\/ins>/gi,
-    ""
-  );
-
-  // 5. Neutralize other ad network script injections in JS strings
-  const adScriptPatterns = [
-    /https?:\\?\/\\?\/?[a-z]*\.?juicyads\.(com|me)[^'"\\)}\s]*/gi,
-    /https?:\\?\/\\?\/?[a-z]*\.?exoclick\.com[^'"\\)}\s]*/gi,
-    /https?:\\?\/\\?\/?[a-z]*\.?exosrv\.com[^'"\\)}\s]*/gi,
-    /https?:\\?\/\\?\/?[a-z]*\.?realsrv\.com[^'"\\)}\s]*/gi,
-    /https?:\\?\/\\?\/?[a-z]*\.?trafficjunky\.(com|net)[^'"\\)}\s]*/gi,
-    /https?:\\?\/\\?\/?[a-z]*\.?betweendigital\.com[^'"\\)}\s]*/gi,
-    /https?:\\?\/\\?\/?[a-z]*\.?uuidksinc\.net[^'"\\)}\s]*/gi,
-  ];
-  for (const pattern of adScriptPatterns) {
-    body = body.replace(pattern, "about:blank");
-  }
-
   return body;
 }
 
@@ -652,7 +586,8 @@ function injectAdBlockRuntime(body, mirrorHost) {
     'tubecorporate.com','livejasmin.com','awinmid.com',
     'fleshlight.com','cam4.com','stripchat.com',
     'chaturbate.com','bongacams.com','imlive.com',
-    'jads.co','poweredby.jads.co'
+    'jads.co','poweredby.jads.co',
+    'wpadmngr.com','js.wpadmngr.com'
   ];
 
   var TRUSTED = [
@@ -1059,40 +994,6 @@ function injectAdBlockRuntime(body, mirrorHost) {
   setTimeout(cleanup, 3000);
   setTimeout(cleanup, 5000);
   setTimeout(cleanup, 10000);
-
-  // Override jQuery .append/.html/.prepend to filter ad content
-  function patchjQuery() {
-    if (typeof jQuery === 'undefined' && typeof $ === 'undefined') return;
-    var jq = typeof jQuery !== 'undefined' ? jQuery : $;
-    if (!jq || !jq.fn || jq.fn.__mirrorPatched) return;
-    jq.fn.__mirrorPatched = true;
-
-    var adContentPattern = /jads\\.co|juicyads|adsbyjuicy|juicy_code|exoclick|exosrv|realsrv|adshow\\.php|adzone|popunder|clickunder/i;
-
-    ['append','prepend','html','after','before'].forEach(function(method) {
-      var orig = jq.fn[method];
-      if (!orig) return;
-      jq.fn[method] = function() {
-        var args = Array.prototype.slice.call(arguments);
-        for (var i = 0; i < args.length; i++) {
-          if (typeof args[i] === 'string' && adContentPattern.test(args[i])) {
-            args[i] = '<!-- ad blocked -->';
-          }
-        }
-        return orig.apply(this, args);
-      };
-    });
-  }
-
-  // Patch jQuery when it loads
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', patchjQuery);
-  } else {
-    patchjQuery();
-  }
-  setTimeout(patchjQuery, 100);
-  setTimeout(patchjQuery, 500);
-  setTimeout(patchjQuery, 1000);
 })();
 </script>`;
 
