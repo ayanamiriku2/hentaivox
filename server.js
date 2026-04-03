@@ -256,8 +256,10 @@ app.all("*", async (req, res) => {
     if (isRewritableContent(contentType)) {
       let body = await response.text();
 
-      // 1. Remove all ads
-      body = removeAllAds(body);
+      // 1. Remove all ads (HTML only — running on JS/CSS breaks syntax)
+      if (contentType.includes("text/html")) {
+        body = removeAllAds(body);
+      }
 
       // 2. Rewrite ALL known domains → relative URLs
       //    https://hentaivox.com/path → /path
