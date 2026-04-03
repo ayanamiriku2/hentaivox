@@ -365,6 +365,16 @@ const AD_DOMAINS = [
   "go.onclasrv.com", "onclkds.com", "clickfuse.com",
   "ratexchange.net", "cetrk.com", "clksite.com",
   "voluum.com", "trackvoluum.com",
+  "betweendigital.com", "lbs-eu1.ads.betweendigital.com",
+  "uuidksinc.net", "s.uuidksinc.net",
+  "cpx.to", "rfrfrequency.com", "adsco.re",
+  "adserverplus.com", "365smarfind.com", "adxpansion.com",
+  "ero-advertising.com", "adxprtz.com", "srfrtracker.com",
+  "clickagy.com", "adspyglass.com", "clkmon.com",
+  "datamined.io", "contextualadv.com", "adtng.com",
+  "tubecorporate.com", "livejasmin.com", "awinmid.com",
+  "fleshlight.com", "cam4.com", "stripchat.com",
+  "chaturbate.com", "bongacams.com", "imlive.com",
 ];
 
 // ═══════════════════════════════════════════════════════════════
@@ -456,6 +466,27 @@ function removeAllAds(body) {
     "<!-- adzone removed -->"
   );
 
+  // G. Remove 1x1 tracking iframes (betweendigital, uuidksinc, cookie sync, etc.)
+  body = body.replace(
+    /<iframe[^>]*(?:width\s*=\s*["']?1(?:px)?["']?|height\s*=\s*["']?1(?:px)?["']?|width:1px|height:1px)[^>]*>[\s\S]*?<\/iframe>/gi,
+    "<!-- tracking iframe removed -->"
+  );
+  // Self-closing 1x1 iframes
+  body = body.replace(
+    /<iframe[^>]*(?:width\s*=\s*["']?1(?:px)?["']?|height\s*=\s*["']?1(?:px)?["']?|width:1px|height:1px)[^>]*\/?>/gi,
+    "<!-- tracking iframe removed -->"
+  );
+
+  // H. Remove invisible overlay divs that hijack clicks
+  body = body.replace(
+    /<div[^>]*style\s*=\s*["'][^"']*(?:position:\s*(?:fixed|absolute)[^"']*z-index:\s*\d{4,}|z-index:\s*\d{4,}[^"']*position:\s*(?:fixed|absolute))[^"']*["'][^>]*>[\s\S]*?<\/div>/gi,
+    function(match) {
+      // Keep if it contains meaningful content (images, text nodes > 10 chars)
+      if (/<img[^>]*>/i.test(match) && match.length > 500) return match;
+      return "<!-- overlay removed -->";
+    }
+  );
+
   return body;
 }
 
@@ -496,7 +527,15 @@ function injectAdBlockRuntime(body, mirrorHost) {
   a[href*="juicyads.com"],a[href*="ck.juicyads.com"],
   a[href*="getjuicy.php"],a[href*="exoclick.com"],
   a[href*="trafficjunky.com"],a[href*="trafficstars.com"],
-  img[src*="juicyads"],img[src*="ads.juicyads.me"] {
+  a[href*="betweendigital.com"],a[href*="uuidksinc.net"],
+  iframe[src*="betweendigital"],iframe[src*="uuidksinc"],
+  iframe[src*="match?bidder"],
+  img[src*="juicyads"],img[src*="ads.juicyads.me"],
+  iframe[style*="width:1px"],iframe[style*="width: 1px"],
+  iframe[style*="height:1px"],iframe[style*="height: 1px"],
+  iframe[width="1"],iframe[width="1px"],
+  iframe[height="1"],iframe[height="1px"],
+  iframe[width="0"],iframe[height="0"] {
     display:none!important;visibility:hidden!important;
     height:0!important;width:0!important;
     pointer-events:none!important;position:absolute!important;
@@ -526,7 +565,17 @@ function injectAdBlockRuntime(body, mirrorHost) {
     'notifpush.com','pushwhy.com','pushengage.com',
     'mafrfrequency.com','bidgear.com','awempire.com','ad.plus',
     'syndication.exoclick.com','go.onclasrv.com','onclkds.com',
-    'clickfuse.com','voluum.com','trackvoluum.com'
+    'clickfuse.com','voluum.com','trackvoluum.com',
+    'betweendigital.com','lbs-eu1.ads.betweendigital.com',
+    'uuidksinc.net','s.uuidksinc.net',
+    'cpx.to','rfrfrequency.com','adsco.re',
+    'adserverplus.com','365smarfind.com','adxpansion.com',
+    'ero-advertising.com','adxprtz.com','srfrtracker.com',
+    'clickagy.com','adspyglass.com','clkmon.com',
+    'datamined.io','contextualadv.com','adtng.com',
+    'tubecorporate.com','livejasmin.com','awinmid.com',
+    'fleshlight.com','cam4.com','stripchat.com',
+    'chaturbate.com','bongacams.com','imlive.com'
   ];
 
   var TRUSTED = [
@@ -618,14 +667,27 @@ function injectAdBlockRuntime(body, mirrorHost) {
     return _AEL.call(this, type, fn, opts);
   };
 
-  // Capture click
+  // ── AGGRESSIVE TAB-UNDER / POPUNDER PROTECTION ──
+  // Track click state: any window.open or location change during a click
+  // that doesn't go to same-site is blocked.
+  var __clickTime = 0;
+  var __clickIsLegit = false;
+  var CLICK_WINDOW_MS = 1500;
+
+  function inClickWindow() {
+    return (Date.now() - __clickTime) < CLICK_WINDOW_MS;
+  }
+
+  // Capture click — mark click window
   document.addEventListener('click', function(e) {
     var el = e.target;
-    var isLegitLink = false;
+    __clickTime = Date.now();
+    __clickIsLegit = false;
+
     while (el && el !== document.body) {
       if (el.tagName === 'A' && el.href) {
         if (isSameSite(el.href) || isTrusted(el.href)) {
-          isLegitLink = true;
+          __clickIsLegit = true;
         } else if (isAd(el.href)) {
           e.preventDefault();
           e.stopPropagation();
@@ -636,9 +698,11 @@ function injectAdBlockRuntime(body, mirrorHost) {
       }
       el = el.parentElement;
     }
-    if (!isLegitLink && !e.target.closest('a, button, input, select, textarea, video, audio, [role="button"], [onclick]')) {
+
+    // If clicking on empty area (not a link/button), block ALL redirects
+    if (!__clickIsLegit && !e.target.closest('a, button, input, select, textarea, video, audio, [role="button"], [onclick]')) {
       window.__mirrorBlockRedirect = true;
-      setTimeout(function() { window.__mirrorBlockRedirect = false; }, 500);
+      setTimeout(function() { window.__mirrorBlockRedirect = false; }, CLICK_WINDOW_MS);
     }
   }, true);
 
@@ -656,15 +720,23 @@ function injectAdBlockRuntime(body, mirrorHost) {
     }
   }, true);
 
-  // Block window.open
+  // Block window.open — ONLY allow same-site opens OR legit link clicks
   var _origOpen = window.open;
   try {
     Object.defineProperty(window, 'open', {
       get: function() {
         return function(url, name, specs) {
-          if (!url) return null;
-          if (typeof url === 'string' && (isAd(url) || url === 'about:blank' || url === '')) return null;
-          if (window.__mirrorBlockRedirect) return null;
+          if (!url || url === 'about:blank' || url === '') return null;
+          if (typeof url === 'string') {
+            if (isAd(url)) return null;
+            // During a click event, only allow same-site window.open
+            if (inClickWindow() && !isSameSite(url) && !isTrusted(url)) {
+              return null;
+            }
+            if (window.__mirrorBlockRedirect) return null;
+            // Outside click: still block non-same-site opens (timer-based popunders)
+            if (!isSameSite(url) && !isTrusted(url)) return null;
+          }
           return _origOpen.call(window, url, name, specs);
         };
       },
@@ -673,19 +745,90 @@ function injectAdBlockRuntime(body, mirrorHost) {
     });
   } catch(e) {}
 
-  // Block location redirect
+  // Block location redirect — prevent tab-under
   try {
     var _assign = location.assign.bind(location);
     var _replace = location.replace.bind(location);
     location.assign = function(url) {
-      if (isAd(url) || window.__mirrorBlockRedirect) return;
+      if (typeof url === 'string' && (isAd(url) || window.__mirrorBlockRedirect)) return;
+      // During click window, if something tries to navigate away to non-same-site, block it
+      if (inClickWindow() && typeof url === 'string' && !isSameSite(url) && !isTrusted(url)) return;
       return _assign(url);
     };
     location.replace = function(url) {
-      if (isAd(url) || window.__mirrorBlockRedirect) return;
+      if (typeof url === 'string' && (isAd(url) || window.__mirrorBlockRedirect)) return;
+      if (inClickWindow() && typeof url === 'string' && !isSameSite(url) && !isTrusted(url)) return;
       return _replace(url);
     };
   } catch(e) {}
+
+  // Block location.href setter — catches: location.href = 'ad-url'
+  try {
+    var locDesc = Object.getOwnPropertyDescriptor(window, 'location');
+    if (!locDesc || locDesc.configurable) {
+      // Can't override location in most browsers, use History API instead
+    }
+  } catch(e) {}
+
+  // Intercept History pushState/replaceState to block ad redirects
+  try {
+    var _pushState = history.pushState.bind(history);
+    var _replaceState = history.replaceState.bind(history);
+    history.pushState = function(state, title, url) {
+      if (typeof url === 'string' && !isSameSite(url) && isAd(url)) return;
+      return _pushState(state, title, url);
+    };
+    history.replaceState = function(state, title, url) {
+      if (typeof url === 'string' && !isSameSite(url) && isAd(url)) return;
+      return _replaceState(state, title, url);
+    };
+  } catch(e) {}
+
+  // Block beforeunload-based redirects during click
+  window.addEventListener('beforeunload', function(e) {
+    if (inClickWindow() && !__clickIsLegit) {
+      e.preventDefault();
+      e.returnValue = '';
+      return '';
+    }
+  });
+
+  // Prevent setTimeout/setInterval based redirects
+  var _setTimeout = window.setTimeout;
+  var _setInterval = window.setInterval;
+  window.setTimeout = function(fn, ms) {
+    if (typeof fn === 'string') {
+      var lc = fn.toLowerCase();
+      if (/window\.open|location\.href|location\.assign|location\.replace|document\.write/i.test(lc)) return 0;
+    }
+    return _setTimeout.apply(window, arguments);
+  };
+  window.setInterval = function(fn, ms) {
+    if (typeof fn === 'string') {
+      var lc = fn.toLowerCase();
+      if (/window\.open|location\.href|location\.assign|location\.replace|document\.write/i.test(lc)) return 0;
+    }
+    return _setInterval.apply(window, arguments);
+  };
+
+  // Block document.write of ad content
+  var _docWrite = document.write.bind(document);
+  var _docWriteln = document.writeln.bind(document);
+  document.write = function(markup) {
+    if (typeof markup === 'string') {
+      var lc = markup.toLowerCase();
+      if (AD.some(function(d) { return lc.indexOf(d) !== -1; })) return;
+      if (/adsbyjuicy|juicy_code|adshow\.php|popunder|clickunder/i.test(lc)) return;
+    }
+    return _docWrite(markup);
+  };
+  document.writeln = function(markup) {
+    if (typeof markup === 'string') {
+      var lc = markup.toLowerCase();
+      if (AD.some(function(d) { return lc.indexOf(d) !== -1; })) return;
+    }
+    return _docWriteln(markup);
+  };
 
   // Block createElement for ad scripts
   var _ce = document.createElement.bind(document);
@@ -769,8 +912,15 @@ function injectAdBlockRuntime(body, mirrorHost) {
         }
         if (tag === 'IFRAME') {
           var isrc = n.src || '';
-          if (isAd(isrc) || /adshow\\.php/i.test(isrc)) { n.remove(); return; }
-          if ((n.width === '0' || n.width === '1' || n.height === '0' || n.height === '1') && !isTrusted(isrc) && !isSameSite(isrc)) { n.remove(); return; }
+          if (isAd(isrc) || /adshow\\.php|match\\?bidder|remote_uid/i.test(isrc)) { n.remove(); return; }
+          var iw = n.width || n.style.width || '';
+          var ih = n.height || n.style.height || '';
+          if (/^[01](?:px)?$/.test(String(iw)) || /^[01](?:px)?$/.test(String(ih))) {
+            if (!isTrusted(isrc) && !isSameSite(isrc)) { n.remove(); return; }
+          }
+          if (n.style && n.style.position === 'absolute' && (parseInt(n.style.width) <= 1 || parseInt(n.style.height) <= 1)) {
+            n.remove(); return;
+          }
         }
         if (tag === 'A' && n.href && isAd(n.href)) { n.remove(); return; }
         if (tag === 'IMG' && n.src && isAd(n.src)) { n.remove(); return; }
@@ -790,7 +940,15 @@ function injectAdBlockRuntime(body, mirrorHost) {
   function cleanup() {
     document.querySelectorAll('iframe').forEach(function(f) {
       var src = f.src || '';
-      if (isAd(src) || /adshow\\.php/i.test(src)) f.remove();
+      if (isAd(src) || /adshow\\.php|match\\?bidder|remote_uid/i.test(src)) { f.remove(); return; }
+      var fw = f.width || f.style.width || f.getAttribute('width') || '';
+      var fh = f.height || f.style.height || f.getAttribute('height') || '';
+      if (/^[01](?:px)?$/.test(String(fw)) || /^[01](?:px)?$/.test(String(fh))) {
+        if (!isTrusted(src) && !isSameSite(src)) { f.remove(); return; }
+      }
+      if (f.style.position === 'absolute' && (parseInt(f.style.width) <= 1 || parseInt(f.style.height) <= 1)) {
+        f.remove(); return;
+      }
     });
     document.querySelectorAll('[id*="adzone"], [class*="adzone"]').forEach(function(el) { el.remove(); });
     document.querySelectorAll('img[width="1"][height="1"]').forEach(function(el) {
