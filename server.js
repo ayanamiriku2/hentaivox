@@ -256,8 +256,13 @@ app.all("*", async (req, res) => {
     if (isRewritableContent(contentType)) {
       let body = await response.text();
 
-      // 1. Remove all ads
+      // 1. Remove all ads (HTML-level)
       body = removeAllAds(body);
+
+      // 1.5 Strip ad code from JS bundles (jads.co, juicyads, popunder strings embedded in JS)
+      if (contentType.includes("javascript") || contentType.includes("text/javascript")) {
+        body = stripAdCodeFromJS(body);
+      }
 
       // 2. Rewrite ALL known domains → relative URLs
       //    https://hentaivox.com/path → /path
@@ -375,6 +380,7 @@ const AD_DOMAINS = [
   "tubecorporate.com", "livejasmin.com", "awinmid.com",
   "fleshlight.com", "cam4.com", "stripchat.com",
   "chaturbate.com", "bongacams.com", "imlive.com",
+  "jads.co", "poweredby.jads.co",
 ];
 
 // ═══════════════════════════════════════════════════════════════
@@ -487,6 +493,74 @@ function removeAllAds(body) {
     }
   );
 
+  // I. Remove ad container divs (header-ban-agsy, middle-ban-agsy, footer-ban-agsy)
+  body = body.replace(
+    /<div[^>]*id\s*=\s*["'][^"']*ban-agsy[^"']*["'][^>]*>[\s\S]*?<\/div>/gi,
+    "<!-- ad container removed -->"
+  );
+
+  // J. Remove <ins> ad elements (JuicyAds, AdSense-style)
+  body = body.replace(
+    /<ins[^>]*(?:data-width|data-height|class\s*=\s*["']adsbygoogle)[^>]*>[\s\S]*?<\/ins>/gi,
+    "<!-- ad ins removed -->"
+  );
+
+  return body;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  STRIP AD CODE FROM JS BUNDLES
+//  The origin's JS files contain hardcoded ad injection code
+//  (e.g. jQuery .append() of JuicyAds scripts). This function
+//  neutralizes those patterns inside JS content.
+// ═══════════════════════════════════════════════════════════════
+
+function stripAdCodeFromJS(body) {
+  // 1. Remove entire JuicyAds injection strings:
+  //    '<script ...src="https://poweredby.jads.co/js/jads.js">...(adsbyjuicy=...).push({adzone:...})...</script>'
+  //    These appear as string literals inside JS, used in jQuery .append() / .html()
+  body = body.replace(
+    /<\\?\/script[^'"]*src\\?=\\?["'][^"']*jads\.co[^"']*["'][^'"]*>[^'"]*adsbyjuicy[^'"]*<\\?\/\\?script\\?>/gi,
+    "<!-- ad removed -->"
+  );
+
+  // 2. Broader: any string containing poweredby.jads.co or jads.co/js
+  body = body.replace(
+    /https?:\\?\/\\?\/?poweredby\.jads\.co[^'"\\)}\s]*/gi,
+    "about:blank"
+  );
+  body = body.replace(
+    /https?:\\?\/\\?\/?[a-z]*\.?jads\.co\/js\/jads\.js/gi,
+    "about:blank"
+  );
+
+  // 3. Neutralize adsbyjuicy.push calls in JS strings
+  //    (adsbyjuicy = window.adsbyjuicy || []).push({...})
+  body = body.replace(
+    /\(adsbyjuicy\s*=\s*window\.adsbyjuicy\s*\|\|\s*\[\]\)\.push\(\{[^}]*\}\)/gi,
+    "void 0"
+  );
+
+  // 4. Remove JuicyAds <ins> elements in JS strings
+  body = body.replace(
+    /<ins\s+id=\\?["'][^"']*\\?["']\s+data-width=\\?["'][^"']*\\?["']\s+data-height=\\?["'][^"']*\\?["']><\\?\/ins>/gi,
+    ""
+  );
+
+  // 5. Neutralize other ad network script injections in JS strings
+  const adScriptPatterns = [
+    /https?:\\?\/\\?\/?[a-z]*\.?juicyads\.(com|me)[^'"\\)}\s]*/gi,
+    /https?:\\?\/\\?\/?[a-z]*\.?exoclick\.com[^'"\\)}\s]*/gi,
+    /https?:\\?\/\\?\/?[a-z]*\.?exosrv\.com[^'"\\)}\s]*/gi,
+    /https?:\\?\/\\?\/?[a-z]*\.?realsrv\.com[^'"\\)}\s]*/gi,
+    /https?:\\?\/\\?\/?[a-z]*\.?trafficjunky\.(com|net)[^'"\\)}\s]*/gi,
+    /https?:\\?\/\\?\/?[a-z]*\.?betweendigital\.com[^'"\\)}\s]*/gi,
+    /https?:\\?\/\\?\/?[a-z]*\.?uuidksinc\.net[^'"\\)}\s]*/gi,
+  ];
+  for (const pattern of adScriptPatterns) {
+    body = body.replace(pattern, "about:blank");
+  }
+
   return body;
 }
 
@@ -535,7 +609,9 @@ function injectAdBlockRuntime(body, mirrorHost) {
   iframe[style*="height:1px"],iframe[style*="height: 1px"],
   iframe[width="1"],iframe[width="1px"],
   iframe[height="1"],iframe[height="1px"],
-  iframe[width="0"],iframe[height="0"] {
+  iframe[width="0"],iframe[height="0"],
+  div#header-ban-agsy,div#middle-ban-agsy,div#footer-ban-agsy,
+  [id*="ban-agsy"],[class*="ban-agsy"] {
     display:none!important;visibility:hidden!important;
     height:0!important;width:0!important;
     pointer-events:none!important;position:absolute!important;
@@ -575,7 +651,8 @@ function injectAdBlockRuntime(body, mirrorHost) {
     'datamined.io','contextualadv.com','adtng.com',
     'tubecorporate.com','livejasmin.com','awinmid.com',
     'fleshlight.com','cam4.com','stripchat.com',
-    'chaturbate.com','bongacams.com','imlive.com'
+    'chaturbate.com','bongacams.com','imlive.com',
+    'jads.co','poweredby.jads.co'
   ];
 
   var TRUSTED = [
@@ -839,7 +916,7 @@ function injectAdBlockRuntime(body, mirrorHost) {
       var _sa = el.setAttribute.bind(el);
       el.setAttribute = function(n, v) {
         if (n === 'src' && typeof v === 'string') {
-          if (isAd(v) || /jac\\.js|adshow\\.php|profile\\.min\\.js/i.test(v)) return;
+          if (isAd(v) || /jac\\.js|adshow\\.php|profile\\.min\\.js|jads\\.co/i.test(v)) return;
           if (!isTrusted(v) && !isSameSite(v) && isObf(v)) return;
         }
         return _sa(n, v);
@@ -849,7 +926,7 @@ function injectAdBlockRuntime(body, mirrorHost) {
           get: function() { return el.getAttribute('src') || ''; },
           set: function(v) {
             if (typeof v === 'string') {
-              if (isAd(v) || /jac\\.js|adshow\\.php|profile\\.min\\.js/i.test(v)) return;
+              if (isAd(v) || /jac\\.js|adshow\\.php|profile\\.min\\.js|jads\\.co/i.test(v)) return;
               if (!isTrusted(v) && !isSameSite(v) && isObf(v)) return;
             }
             _sa('src', v);
@@ -906,7 +983,7 @@ function injectAdBlockRuntime(body, mirrorHost) {
           if (
             isAd(src) ||
             (!isTrusted(src) && !isSameSite(src) && src && isObf(src)) ||
-            /jac\\.js|adshow\\.php|profile\\.min\\.js/i.test(src) ||
+            /jac\\.js|adshow\\.php|profile\\.min\\.js|jads\\.co/i.test(src) ||
             /adsbyjuicy|juicy_code|adserver\\.juicyads|adshow\\.php|unusual-spot|psotiwhotho|diagramjawlineunhappy|bullionglidingscuttle/i.test(text)
           ) { n.remove(); return; }
         }
@@ -927,7 +1004,7 @@ function injectAdBlockRuntime(body, mirrorHost) {
         if (n.querySelectorAll) {
           n.querySelectorAll('script[src], iframe[src], a[href], img[src]').forEach(function(el) {
             var s = el.src || el.href || '';
-            if (isAd(s) || /jac\\.js|adshow\\.php|profile\\.min\\.js/i.test(s)) el.remove();
+            if (isAd(s) || /jac\\.js|adshow\\.php|profile\\.min\\.js|jads\\.co/i.test(s)) el.remove();
           });
           n.querySelectorAll('iframe[src*="adshow.php"]').forEach(function(el) { el.remove(); });
         }
@@ -951,6 +1028,8 @@ function injectAdBlockRuntime(body, mirrorHost) {
       }
     });
     document.querySelectorAll('[id*="adzone"], [class*="adzone"]').forEach(function(el) { el.remove(); });
+    document.querySelectorAll('[id*="ban-agsy"]').forEach(function(el) { el.innerHTML = ''; el.style.display = 'none'; });
+    document.querySelectorAll('ins[data-width], ins[data-height]').forEach(function(el) { el.remove(); });
     document.querySelectorAll('img[width="1"][height="1"]').forEach(function(el) {
       if (el.src && isAd(el.src)) el.remove();
     });
@@ -966,6 +1045,8 @@ function injectAdBlockRuntime(body, mirrorHost) {
     document.querySelectorAll('a[target="_blank"]').forEach(function(el) {
       if (isAd(el.href)) el.remove();
     });
+    // Remove any dynamically loaded ad scripts
+    document.querySelectorAll('script[src*="jads.co"], script[src*="juicyads"], script[src*="exoclick"], script[src*="exosrv"]').forEach(function(el) { el.remove(); });
   }
 
   if (document.readyState === 'loading') {
@@ -978,6 +1059,40 @@ function injectAdBlockRuntime(body, mirrorHost) {
   setTimeout(cleanup, 3000);
   setTimeout(cleanup, 5000);
   setTimeout(cleanup, 10000);
+
+  // Override jQuery .append/.html/.prepend to filter ad content
+  function patchjQuery() {
+    if (typeof jQuery === 'undefined' && typeof $ === 'undefined') return;
+    var jq = typeof jQuery !== 'undefined' ? jQuery : $;
+    if (!jq || !jq.fn || jq.fn.__mirrorPatched) return;
+    jq.fn.__mirrorPatched = true;
+
+    var adContentPattern = /jads\\.co|juicyads|adsbyjuicy|juicy_code|exoclick|exosrv|realsrv|adshow\\.php|adzone|popunder|clickunder/i;
+
+    ['append','prepend','html','after','before'].forEach(function(method) {
+      var orig = jq.fn[method];
+      if (!orig) return;
+      jq.fn[method] = function() {
+        var args = Array.prototype.slice.call(arguments);
+        for (var i = 0; i < args.length; i++) {
+          if (typeof args[i] === 'string' && adContentPattern.test(args[i])) {
+            args[i] = '<!-- ad blocked -->';
+          }
+        }
+        return orig.apply(this, args);
+      };
+    });
+  }
+
+  // Patch jQuery when it loads
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', patchjQuery);
+  } else {
+    patchjQuery();
+  }
+  setTimeout(patchjQuery, 100);
+  setTimeout(patchjQuery, 500);
+  setTimeout(patchjQuery, 1000);
 })();
 </script>`;
 
